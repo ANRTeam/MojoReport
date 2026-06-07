@@ -1,0 +1,4 @@
+pdfplumber
+reportlab
+matplotlib
+streamlit
