@@ -70,7 +70,8 @@ def extract_session_records(file_bytes):
         'appointments','mojo','https','group','time', 'appts/leads'
     }
     
-    result_pat = re.compile(r'^([A-Za-z0-9\s/&_-]*?)\s*(\d+)\s+([\d:]+)\s*[-]?\s*$')
+    # التعديل هنا: يقبل أي عدد من أعمدة الوقت عشان ما يفشل بالتوتال
+    result_pat = re.compile(r'^([A-Za-z0-9\s/&_-]*?)\s*(\d+)(?:\s+[\d:]+)+\s*[-]?\s*$')
     seen = {}
     buffered_text = ""
     
@@ -78,7 +79,7 @@ def extract_session_records(file_bytes):
         if re.match(r'^Total\s+[A-Za-z]', line, re.IGNORECASE): 
             buffered_text = ""
             continue
-        if line.upper().startswith('TOTAL '):    
+        if line.upper().startswith('TOTAL '):   
             buffered_text = ""
             continue
             
@@ -94,7 +95,9 @@ def extract_session_records(file_bytes):
                 seen[clean_label] = max(seen.get(clean_label, 0), count)
             buffered_text = ""
         elif re.match(r'^[A-Za-z\s/&_-]+$', line):
-            if line.lower().strip() not in SKIP_FIRST:
+            # التعديل هنا: فحص أول كلمة في السطر عشان ما يدمج الـ Header
+            first_w = line.lower().split()[0] if line.strip() else ''
+            if first_w not in SKIP_FIRST:
                 buffered_text = (buffered_text + " " + line.strip()).strip()
             else:
                 buffered_text = ""
@@ -242,8 +245,8 @@ def build_styles():
 # ── Graphs ─────────────────────────────────────────────────────────────────
 def buf_leaderboard(teams_data):
     for t in teams_data:
-        t['val_time']     = t['stats']['dial_mins']
-        t['val_calls']    = t['stats']['total_calls']
+        t['val_time']      = t['stats']['dial_mins']
+        t['val_calls']     = t['stats']['total_calls']
         t['val_voicemail'] = sum(v for k,v in t['stats']['result_counts'].items() if 'voicemail' in k.lower())
         t['val_no_answer'] = sum(v for k,v in t['stats']['result_counts'].items() if 'no answer' in k.lower() or 'machine no answer' in k.lower())
         t['val_other']     = max(0, t['val_calls'] - (t['val_voicemail'] + t['val_no_answer']))
