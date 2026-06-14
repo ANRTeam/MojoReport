@@ -64,14 +64,49 @@ def extract_session_records(file_bytes):
         full_text = '\n'.join(page.extract_text() or '' for page in pdf.pages)
 
     lines = [l.strip() for l in full_text.split('\n') if l.strip()]
+    SKIP_FIRST = {
+        'date','agent','type','gr','list','calls','appts','leads',
+        'dial','talk','pause','dur','start','end','result','total',
+        'appointments','mojo','https','group','time', 'appts/leads'
+    }
     
-    result_counts = extract_final_totals(lines)
+    result_pat = re.compile(r'^([A-Za-z0-9\s/&_-]*?)\s*(\d+)\s+([\d:]+)\s*[-]?\s*$')
+    seen = {}
+    buffered_text = ""
     
+    for line in lines:
+        if re.match(r'^Total\s+[A-Za-z]', line, re.IGNORECASE): 
+            buffered_text = ""
+            continue
+        if line.upper().startswith('TOTAL '):    
+            buffered_text = ""
+            continue
+            
+        m = result_pat.match(line)
+        if m and len(m.group(2)) < 6: 
+            label = m.group(1).strip()
+            if buffered_text:
+                label = (buffered_text + " " + label).strip()
+            first_word = label.lower().split()[0] if label else ''
+            if label and first_word not in SKIP_FIRST and not re.match(r'^\d{1,2}/\d{1,2}', label):
+                count = int(m.group(2))
+                clean_label = clean_result(label)
+                seen[clean_label] = max(seen.get(clean_label, 0), count)
+            buffered_text = ""
+        elif re.match(r'^[A-Za-z\s/&_-]+$', line):
+            if line.lower().strip() not in SKIP_FIRST:
+                buffered_text = (buffered_text + " " + line.strip()).strip()
+            else:
+                buffered_text = ""
+        else:
+            buffered_text = ""
+
+    result_counts = Counter(seen)
+    true_total_calls = sum(result_counts.values())
+
     agent_name = 'Unknown'
-    total_appts = 0
-    total_leads = 0
-    dial_time_str = '0:00:00'
-    total_dial_mins = 0.0
+    total_appts = 0; total_leads = 0
+    dial_time_str = '0:00:00'; total_dial_mins = 0.0
     total_talk_mins = 0.0
 
     for line in lines:
@@ -94,7 +129,7 @@ def extract_session_records(file_bytes):
                     total_dial_mins = parse_hms(matches[-1])
                 elif len(matches) == 1:
                     total_dial_mins = parse_hms(matches[-1])
-
+                    
     if agent_name == 'Unknown':
         for line in lines:
             if 'total' in line.lower() and not line.lower().startswith('total calls'):
@@ -120,10 +155,7 @@ def extract_session_records(file_bytes):
         flags=re.IGNORECASE
     )
     
-    sessions = []
-    date_counts = Counter()
-    list_counts = Counter()
-    
+    sessions = []; date_counts = Counter(); list_counts = Counter()
     for line in lines:
         m = sess_pat.search(line)
         if m:
@@ -155,16 +187,13 @@ def extract_session_records(file_bytes):
         elif len(true_lists) == 1:
             list_counts = Counter({true_lists[0]: sum(list_counts.values())})
 
-    if sum(list_counts.values()) == 0 and sum(result_counts.values()) > 0 and true_lists:
+    if sum(list_counts.values()) == 0 and true_total_calls > 0 and true_lists:
         if len(true_lists) == 1:
-            list_counts[true_lists[0]] = sum(result_counts.values())
+            list_counts[true_lists[0]] = true_total_calls
         else:
-            split = sum(result_counts.values()) // len(true_lists)
-            for lst in true_lists: 
-                list_counts[lst] = split
-            list_counts[true_lists[0]] += sum(result_counts.values()) % len(true_lists)
-
-    true_total_calls = sum(result_counts.values())
+            split = true_total_calls // len(true_lists)
+            for lst in true_lists: list_counts[lst] = split
+            list_counts[true_lists[0]] += true_total_calls % len(true_lists)
 
     return {
         'agent_name':    agent_name,
@@ -180,43 +209,6 @@ def extract_session_records(file_bytes):
         'talk_mins':     total_talk_mins,
         'talk_str':      fmt_talk(total_talk_mins),
     }
-
-
-def extract_final_totals(lines):
-    result_counts = Counter()
-    
-    i = len(lines) - 1
-    while i >= 0:
-        if re.match(r'^TOTAL\s+\d+', lines[i], re.IGNORECASE):
-            j = i - 1
-            while j >= 0:
-                line = lines[j]
-                if re.match(r'^Result\s+Total\s+Calls', line, re.IGNORECASE):
-                    j += 1
-                    break
-                if j < i - 1 and re.match(r'^TOTAL', line, re.IGNORECASE):
-                    j += 1
-                    break
-                j -= 1
-            
-            for k in range(j, i):
-                line = lines[k]
-                m = re.match(r'^([A-Za-z\s/&_-]+?)\s+(\d+)\s+[\d:]+', line)
-                if m:
-                    name = m.group(1).strip()
-                    if name.lower() not in ('result', 'talk time', 'dial time', 'total calls', 'appts', 'leads', 'appointments'):
-                        clean_name = clean_result(name)
-                        if clean_name and clean_name.lower() != 'unknown':
-                            result_counts[clean_name] = int(m.group(2))
-            
-            if sum(result_counts.values()) > 0:
-                return result_counts
-            i -= 1
-        else:
-            i -= 1
-    
-    return result_counts
-
 
 # ── Colours ────────────────────────────────────────────────────────────────
 BLUE       = colors.HexColor('#185FA5')
